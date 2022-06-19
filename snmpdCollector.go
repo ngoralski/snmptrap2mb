@@ -17,7 +17,7 @@ import (
 )
 
 var hostname, _ = os.Hostname()
-var loggy = log.WithFields(log.Fields{
+var myLog = log.WithFields(log.Fields{
 	"hostname": hostname,
 })
 
@@ -41,6 +41,7 @@ func myUDPServer(listenIPAddr string, port int) *net.UDPConn {
 	conn, err := net.ListenUDP("udp", &addr)
 	if err != nil {
 		logger("Can't listen on UDP port", "fatal")
+		panic("Failed to bind UDP Port")
 	}
 	return conn
 }
@@ -55,23 +56,22 @@ func newKafkaWriter(kafkaURL, topic string) *kafka.Writer {
 func logger(msg string, severity string) {
 	switch strings.ToLower(severity) {
 	case "fatal":
-		loggy.Fatal(msg)
-		fmt.Printf(msg)
-		panic("msg")
+		myLog.Fatal(msg)
+		fmt.Printf("%s\n", msg)
 	case "error":
-		loggy.Error(msg)
-	case "debug":
-		if viper.Get("log_level") == "debug" {
-			loggy.Debug(msg)
+		myLog.Error(msg)
+	case "warn":
+		if viper.Get("log_level") == "warn" {
+			myLog.Warn(msg)
 		}
 	default:
 		// by default info all other undefined values match here
-		loggy.Info(msg)
+		myLog.Info(msg)
 	}
 }
 
 func defaultLogLevel() {
-	loggy = log.WithFields(log.Fields{
+	myLog = log.WithFields(log.Fields{
 		"hostname": hostname,
 	})
 }
@@ -85,6 +85,8 @@ func createSnmpListener(udpSock *net.UDPConn, writer *kafka.Writer, snmp *snmpli
 		_, addr, snmpErr := udpSock.ReadFromUDP(packet)
 		if snmpErr != nil {
 			logger("Error on reading udp packet", "fatal")
+			alarm <- struct{}{}
+			return
 		}
 		loop++
 
@@ -93,7 +95,7 @@ func createSnmpListener(udpSock *net.UDPConn, writer *kafka.Writer, snmp *snmpli
 		trapData, snmpErr := snmp.ParseTrap(packet)
 		if snmpErr != nil {
 			//log.Printf("Error processing trap: %v.", snmpErr)
-			logger(fmt.Sprintf("Error processing trap: %v.", snmpErr), "debug")
+			logger(fmt.Sprintf("Error processing trap: %v.", snmpErr), "warn")
 			continue
 		}
 
@@ -121,24 +123,31 @@ func createSnmpListener(udpSock *net.UDPConn, writer *kafka.Writer, snmp *snmpli
 		kafkaErr := writer.WriteMessages(context.Background(), msg)
 		if kafkaErr != nil {
 			logger(fmt.Sprint(kafkaErr), "error")
+			alarm <- struct{}{}
 		} else {
+
+			if viper.Get("log_level") == "warn" {
+				myLog = log.WithFields(log.Fields{
+					"hostname":      hostname,
+					"snmp_version":  snmpData.Version,
+					"trap_type":     snmpData.TrapType,
+					"oid":           snmpData.OID,
+					"specific_trap": snmpData.Other,
+					"community":     snmpData.Community,
+					"username":      snmpData.Username,
+					"address":       snmpData.Address,
+					"varbindoids":   snmpData.VarBindOIDs,
+					"varbinds":      snmpData.VarBinds,
+				})
+				logger("trap message received", "warn")
+				defaultLogLevel()
+			}
 			logger("Message produced in kafka", "info")
-			loggy = log.WithFields(log.Fields{
-				"hostname":      hostname,
-				"snmp_version":  snmpData.Version,
-				"trap_type":     snmpData.TrapType,
-				"oid":           snmpData.OID,
-				"specific_trap": snmpData.Other,
-				"community":     snmpData.Community,
-				"username":      snmpData.Username,
-				"address":       snmpData.Address,
-				"varbindoids":   snmpData.VarBindOIDs,
-				"varbinds":      snmpData.VarBinds,
-			})
+
 		}
 
 	}
-	alarm <- struct{}{}
+
 }
 
 func main() {
@@ -154,7 +163,7 @@ func main() {
 		outputFileName := viper.Get("log_output").(string)
 		outputFile, err := os.Create(outputFileName)
 		if err != nil {
-			fmt.Sprintf("Can't write to %s", outputFileName)
+			logger(fmt.Sprintf("Can't write to %s", outputFileName), "info")
 			panic(err)
 		}
 		log.SetHandler(json.New(outputFile))
