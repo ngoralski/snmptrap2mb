@@ -1,0 +1,38 @@
+{
+  "ip": "0.0.0.0",
+  "port": 162,
+  "threads": 100,
+  "log_level": "info",
+  "log_output": "stdout",
+
+  "v3_user": [
+    {
+      "user": "pcb.snmpv3",
+      "auth_algo": "SHA1",
+      "auth_passwd": "this_is_my_pcb",
+      "priv_algo": "AES",
+      "priv_passwd": "my_pcb_is_4_me"
+    },
+    {
+      "user": "bob",
+      "auth_algo": "SHA1",
+      "auth_passwd": "this_is_my_pass",
+      "priv_algo": "AES",
+      "priv_passw": "pass_4_me"
+    }
+  ],
+  "kafka": {
+    "raw": {
+      "server": "localhost:9092",
+      "topic": "raw"
+    },
+    "enriched": {
+      "server": "localhost:9092",
+      "topic": "enriched"
+    },
+    "unknown": {
+      "server": "localhost:9092",
+      "topic": "unknown"
+    }
+  }
+}
