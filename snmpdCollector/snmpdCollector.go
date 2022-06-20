@@ -1,4 +1,4 @@
-package main
+package snmpdCollector
 
 import (
 	"context"
@@ -15,11 +15,6 @@ import (
 	"strings"
 	"time"
 )
-
-var hostname, _ = os.Hostname()
-var myLog = log.WithFields(log.Fields{
-	"hostname": hostname,
-})
 
 type SnmpData struct {
 	Version     int
@@ -53,28 +48,29 @@ func newKafkaWriter(kafkaURL, topic string) *kafka.Writer {
 		Balancer: &kafka.LeastBytes{},
 	}
 }
-func logger(msg string, severity string) {
-	switch strings.ToLower(severity) {
-	case "fatal":
-		myLog.Fatal(msg)
-		fmt.Printf("%s\n", msg)
-	case "error":
-		myLog.Error(msg)
-	case "warn":
-		if viper.Get("log_level") == "warn" {
-			myLog.Warn(msg)
-		}
-	default:
-		// by default info all other undefined values match here
-		myLog.Info(msg)
-	}
-}
 
-func defaultLogLevel() {
-	myLog = log.WithFields(log.Fields{
-		"hostname": hostname,
-	})
-}
+//func logger(msg string, severity string) {
+//	switch strings.ToLower(severity) {
+//	case "fatal":
+//		myLog.Fatal(msg)
+//		fmt.Printf("%s\n", msg)
+//	case "error":
+//		myLog.Error(msg)
+//	case "warn":
+//		if viper.Get("log_level") == "warn" {
+//			myLog.Warn(msg)
+//		}
+//	default:
+//		// by default info all other undefined values match here
+//		myLog.Info(msg)
+//	}
+//}
+//
+//func defaultLogLevel() {
+//	myLog = log.WithFields(log.Fields{
+//		"hostname": hostname,
+//	})
+//}
 
 func createSnmpListener(udpSock *net.UDPConn, writer *kafka.Writer, snmp *snmplib.SNMP, alarm chan struct{}) {
 
@@ -128,7 +124,7 @@ func createSnmpListener(udpSock *net.UDPConn, writer *kafka.Writer, snmp *snmpli
 
 			if viper.Get("log_level") == "warn" {
 				myLog = log.WithFields(log.Fields{
-					"hostname":      hostname,
+					"hostname":      snmpdCollector.hostname,
 					"snmp_version":  snmpData.Version,
 					"trap_type":     snmpData.TrapType,
 					"oid":           snmpData.OID,
