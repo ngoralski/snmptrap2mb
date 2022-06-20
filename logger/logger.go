@@ -13,7 +13,7 @@ var myLog = log.WithFields(log.Fields{
 	"hostname": hostname,
 })
 
-func logger(msg string, severity string) {
+func logMsg(msg string, severity string) {
 	switch strings.ToLower(severity) {
 	case "fatal":
 		myLog.Fatal(msg)
