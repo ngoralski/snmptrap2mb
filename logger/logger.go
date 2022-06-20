@@ -9,29 +9,33 @@ import (
 )
 
 var hostname, _ = os.Hostname()
-var myLog = log.WithFields(log.Fields{
+var MyLog = log.WithFields(log.Fields{
 	"hostname": hostname,
 })
 
-func logMsg(msg string, severity string) {
+func GetHostname() string {
+	return hostname
+}
+
+func LogMsg(msg string, severity string) {
 	switch strings.ToLower(severity) {
 	case "fatal":
-		myLog.Fatal(msg)
+		MyLog.Fatal(msg)
 		fmt.Printf("%s\n", msg)
 	case "error":
-		myLog.Error(msg)
+		MyLog.Error(msg)
 	case "warn":
 		if viper.Get("log_level") == "warn" {
-			myLog.Warn(msg)
+			MyLog.Warn(msg)
 		}
 	default:
 		// by default info all other undefined values match here
-		myLog.Info(msg)
+		MyLog.Info(msg)
 	}
 }
 
-func defaultLogLevel() {
-	myLog = log.WithFields(log.Fields{
+func DefaultLogLevel() {
+	MyLog = log.WithFields(log.Fields{
 		"hostname": hostname,
 	})
 }

@@ -1,0 +1,37 @@
+{
+  "defaults": {
+    "values": {
+      "type": "1"
+    },
+    "lookup":{
+      "file": "sample.json",
+      "key": "${Address}_INFO"
+    }
+  },
+  "conditions": [
+    {
+      "UseCase": "UC001",
+      "type" : "regexp",
+      "search": {
+        "Address": "192\\.168.*",
+        "specific-trap": "44"
+      },
+      "new_values": {
+          "Security" : 1,
+          "EventType" : 3,
+          "Importance" : 2,
+          "Technology" : "Test System",
+          "Customer" : "HOME",
+          "CustomerCode" : "007",
+          "SLALevel" : 2,
+          "Summary" : "$6",
+          "Location" : "Unknown"
+      },
+      "lookup": {
+        "file": "sample.json",
+        "key": "${Address}"
+      }
+    }
+  ]
+
+}
