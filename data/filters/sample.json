@@ -12,6 +12,7 @@
     {
       "UseCase": "UC001",
       "type" : "regexp",
+      "action" : "enrich",
       "search": {
         "Address": "192\\.168.*",
         "specific-trap": "44"

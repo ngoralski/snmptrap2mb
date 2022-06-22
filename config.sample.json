@@ -5,6 +5,25 @@
   "log_level": "info",
   "log_output": "stdout",
 
+  "kafka": {
+    "raw": {
+      "server": "localhost:9092",
+      "topic": "snmp",
+      "group": "test"
+    },
+    "enriched": {
+      "server": "localhost:9092",
+      "topic": "enriched",
+      "group": "test"
+    },
+    "unknown": {
+      "server": "localhost:9092",
+      "topic": "unknown",
+      "group": ""
+    }
+  },
+
+
   "v3_user": [
     {
       "user": "pcb.snmpv3",
@@ -20,19 +39,5 @@
       "priv_algo": "AES",
       "priv_passw": "pass_4_me"
     }
-  ],
-  "kafka": {
-    "raw": {
-      "server": "localhost:9092",
-      "topic": "raw"
-    },
-    "enriched": {
-      "server": "localhost:9092",
-      "topic": "enriched"
-    },
-    "unknown": {
-      "server": "localhost:9092",
-      "topic": "unknown"
-    }
-  }
+  ]
 }

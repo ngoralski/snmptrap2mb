@@ -59,7 +59,7 @@ func parseLookup(lookups map[string]interface{}, snmpData SnmpData) map[string]s
 
 	dataEvent := make(map[string]string)
 
-	jsonFile, err := os.Open("./data/lookup/" + fmt.Sprintf("%s", lookups["file"]))
+	jsonFile, err := os.Open("./data/enrichment/" + fmt.Sprintf("%s", lookups["file"]))
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -134,7 +134,7 @@ func checkCondition(condition map[string]interface{}, snmpData SnmpData) (bool, 
 				matchDyn, _ := regexp.MatchString("^$", fmt.Sprintf("%s", v))
 				if matchDyn {
 					// If value is $6 we need the 6th record in varbind
-					fmt.Printf("Need to make a lookup on a dyn var")
+					fmt.Printf("Need to make a enrichment on a dyn var")
 				} else {
 					switch v.(type) {
 					case float64:
@@ -169,7 +169,7 @@ func parseData(msg string, enriched *kafka.Writer, unknown *kafka.Writer) {
 
 	_ = jsondata.Unmarshal([]byte(msg), &snmpData)
 
-	jsonFile, err := os.Open("./data/hashed/" + snmpData.OID + ".json")
+	jsonFile, err := os.Open("./data/filters/" + snmpData.OID + ".json")
 	// if we os.Open returns an error then handle it
 	if err != nil {
 		fmt.Println(err)
@@ -192,8 +192,8 @@ func parseData(msg string, enriched *kafka.Writer, unknown *kafka.Writer) {
 			newEvent[key] = value.(string)
 		}
 
-		// lookup for specific defaults values defined in a json file that could override previous info.
-		parseLookup(defaults["lookup"].(map[string]interface{}), snmpData)
+		// enrichment for specific defaults values defined in a json file that could override previous info.
+		parseLookup(defaults["enrichment"].(map[string]interface{}), snmpData)
 
 		// Now parse conditions that allow to manage specific use case
 		conditions := result["conditions"].([]interface{})
