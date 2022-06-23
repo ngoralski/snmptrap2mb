@@ -3,6 +3,7 @@ package logger
 import (
 	"fmt"
 	"github.com/apex/log"
+	"github.com/apex/log/handlers/json"
 	"github.com/spf13/viper"
 	"os"
 	"strings"
@@ -17,6 +18,21 @@ func GetHostname() string {
 	return hostname
 }
 
+func InitLog() {
+	if viper.Get("log_output").(string) == "stdout" {
+		log.SetHandler(json.New(os.Stdout))
+	} else {
+		outputFileName := viper.Get("log_output").(string)
+		outputFile, err := os.Create(outputFileName)
+		if err != nil {
+			LogMsg(fmt.Sprintf("Can't write to %s", outputFileName), "info")
+			panic(err)
+		}
+		log.SetHandler(json.New(outputFile))
+	}
+
+}
+
 func LogMsg(msg string, severity string) {
 	switch strings.ToLower(severity) {
 	case "fatal":
@@ -24,8 +40,8 @@ func LogMsg(msg string, severity string) {
 		fmt.Printf("%s\n", msg)
 	case "error":
 		MyLog.Error(msg)
-	case "warn":
-		if viper.Get("log_level") == "warn" {
+	case "debug":
+		if viper.Get("log_level") == "debug" {
 			MyLog.Warn(msg)
 		}
 	default:

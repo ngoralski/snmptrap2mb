@@ -5,14 +5,12 @@ import (
 	jsondata "encoding/json"
 	"fmt"
 	"github.com/apex/log"
-	"github.com/apex/log/handlers/json"
 	"github.com/deejross/go-snmplib"
 	"github.com/ngoralski/snmptrap2mb/logger"
 	kafka "github.com/segmentio/kafka-go"
 	"github.com/spf13/viper"
 	"math/rand"
 	"net"
-	"os"
 	"strings"
 	"time"
 )
@@ -131,18 +129,7 @@ func main() {
 	viper.SetConfigType("json")
 	viper.ReadInConfig()
 
-	if viper.Get("log_output").(string) == "stdout" {
-		log.SetHandler(json.New(os.Stdout))
-	} else {
-		outputFileName := viper.Get("log_output").(string)
-		outputFile, err := os.Create(outputFileName)
-		if err != nil {
-			logger.LogMsg(fmt.Sprintf("Can't write to %s", outputFileName), "info")
-			panic(err)
-		}
-		log.SetHandler(json.New(outputFile))
-	}
-
+	logger.InitLog()
 	logger.LogMsg("Starting snmpdCollector", "info")
 
 	logger.LogMsg("read configfile config.json", "info")

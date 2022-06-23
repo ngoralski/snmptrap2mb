@@ -4,7 +4,6 @@ import (
 	jsondata "encoding/json"
 	"fmt"
 	"github.com/apex/log"
-	"github.com/apex/log/handlers/json"
 	"github.com/mcuadros/go-lookup"
 	"github.com/ngoralski/snmptrap2mb/logger"
 	kafka "github.com/segmentio/kafka-go"
@@ -18,11 +17,6 @@ import (
 )
 
 var wg sync.WaitGroup
-
-//var hostname, _ = os.Hostname()
-//var loggy = log.WithFields(log.Fields{
-//	"hostname": hostname,
-//})
 
 type SnmpData struct {
 	Version     int
@@ -85,7 +79,7 @@ func parseLookup(lookups map[string]interface{}, snmpData SnmpData) map[string]s
 
 }
 
-func checkCondition(condition map[string]interface{}, snmpData SnmpData) (bool, map[string]string) {
+func checkCondition(condition map[string]interface{}, snmpData SnmpData) (bool, map[string]string, string) {
 
 	dataEvent := make(map[string]string)
 	match := false
@@ -93,6 +87,7 @@ func checkCondition(condition map[string]interface{}, snmpData SnmpData) (bool, 
 	validatedCondition := false
 
 	conditionType := fmt.Sprintf("%s", condition["type"])
+	conditionAction := fmt.Sprintf("%s", condition["action"])
 
 	switch conditionType {
 	case "regexp":
@@ -152,7 +147,7 @@ func checkCondition(condition map[string]interface{}, snmpData SnmpData) (bool, 
 
 	}
 
-	return validatedCondition, dataEvent
+	return validatedCondition, dataEvent, conditionAction
 
 }
 
@@ -162,6 +157,7 @@ func parseData(msg string, enriched *kafka.Writer, unknown *kafka.Writer) {
 	var match bool
 	var kafkaErr error
 	var snmpData SnmpData
+	var action string
 
 	// Todo
 	// until message was not clearly readed and analysed / pushed to another topic do not tag it as readed
@@ -169,10 +165,11 @@ func parseData(msg string, enriched *kafka.Writer, unknown *kafka.Writer) {
 
 	_ = jsondata.Unmarshal([]byte(msg), &snmpData)
 
-	jsonFile, err := os.Open("./data/filters/" + snmpData.OID + ".json")
-	// if we os.Open returns an error then handle it
+	jsonFile, err := os.Open("./data/filters/" + snmpData.OID[1:] + ".json")
+
 	if err != nil {
 		fmt.Println(err)
+		logger.LogMsg(fmt.Sprintf("No filter rules found for OID trap : %s", snmpData.OID[1:]), "info")
 	} else {
 		fmt.Println("Successfully Opened oid.json")
 		defer jsonFile.Close()
@@ -201,13 +198,27 @@ func parseData(msg string, enriched *kafka.Writer, unknown *kafka.Writer) {
 		// Warning conditions match are like firewall rules first match stop the search
 		for i := range conditions {
 
-			match, dataEvent = checkCondition(conditions[i].(map[string]interface{}), snmpData)
+			match, dataEvent, action = checkCondition(conditions[i].(map[string]interface{}), snmpData)
 			if match {
 				// exit on loop condition
+				if viper.Get("log_level") == "debug" {
+					debugFields := make(map[string]interface{})
+					for deKey, deValue := range dataEvent {
+						debugFields[deKey] = deValue
+					}
+					DebugFields := log.Fields(debugFields)
+					logger.MyLog = log.WithFields(DebugFields)
+
+					logger.LogMsg("Trap message match usecase", "debug")
+				}
 				break
 			}
 		}
 
+	}
+	switch action {
+	case "enrich":
+		var targetTopic string
 		//
 		for k, v := range dataEvent {
 			dataEvent[k] = v
@@ -220,17 +231,40 @@ func parseData(msg string, enriched *kafka.Writer, unknown *kafka.Writer) {
 
 		if len(dataEvent) > 0 {
 			kafkaErr = enriched.WriteMessages(context.Background(), newMsg)
+			targetTopic = "enriched"
 		} else {
 			kafkaErr = unknown.WriteMessages(context.Background(), kafka.Message{
 				Value: []byte(string(msg)),
 			})
-			fmt.Printf("No match on data in topic\n")
+			targetTopic = "garbage collector"
 		}
 
 		if kafkaErr != nil {
 			fmt.Println(kafkaErr)
 		} else {
-			fmt.Println("produced")
+			fmt.Printf("Trap message sent to %s topic\n", targetTopic)
+		}
+
+	case "discard":
+		if viper.Get("log_level") == "debug" {
+			debugFields := make(map[string]interface{})
+			for deKey, deValue := range dataEvent {
+				debugFields[deKey] = deValue
+			}
+			DebugFields := log.Fields(debugFields)
+			logger.MyLog = log.WithFields(DebugFields)
+
+			logger.LogMsg("Trap message was discarded", "debug")
+		}
+	default:
+		kafkaErr = unknown.WriteMessages(context.Background(), kafka.Message{
+			Value: []byte(string(msg)),
+		})
+
+		if kafkaErr != nil {
+			fmt.Println(kafkaErr)
+		} else {
+			fmt.Printf("Trap message sent to unknown topic\n")
 		}
 	}
 
@@ -242,18 +276,7 @@ func main() {
 	viper.SetConfigName("config")
 	viper.SetConfigType("json")
 	viper.ReadInConfig()
-
-	if viper.Get("log_output").(string) == "stdout" {
-		log.SetHandler(json.New(os.Stdout))
-	} else {
-		outputFileName := viper.Get("log_output").(string)
-		outputFile, err := os.Create(outputFileName)
-		if err != nil {
-			fmt.Sprintf("Can't write to %s", outputFileName)
-			panic(err)
-		}
-		log.SetHandler(json.New(outputFile))
-	}
+	logger.InitLog()
 
 	logger.LogMsg("Starting message enricher", "info")
 

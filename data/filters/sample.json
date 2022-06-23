@@ -3,7 +3,7 @@
     "values": {
       "type": "1"
     },
-    "lookup":{
+    "enrichment":{
       "file": "sample.json",
       "key": "${Address}_INFO"
     }

@@ -73,11 +73,11 @@ This section cover default values applied to related trap.
 
 It's done with 
  - global default values via Keys/Values items in ***values*** subsection.
- - specific values via a lookup perform on json file via a key.
+ - specific values via a lookup performed on json file via a key.
 
 lookup explanation:
 
-    "lookup":{
+    "enrichment":{
         "file": "sample.json",
         "key": "${Address}_INFO"
     }
@@ -126,7 +126,7 @@ Considering the following example :
           "Summary" : "$6",
           "Location" : "Unknown"
       },
-      "lookup": {
+      "enrichment": {
         "file": "sample.json",
         "key": "${Address}"
       }
@@ -139,6 +139,6 @@ We have the following Keys/Values :
  - search : list of values that must match in order to new values / lookup
  - new_values : list of new values to associate to the event data like in default section
    - a value starting by a $ symbol is a reference to the Xth value in the trap data.
- - lookup : file to use as a dictionary and key to lookup inside to associate new values like in defaults section.
+ - enrichment : file to use as a dictionary and key to lookup inside to associate new values like in defaults section.
 
 
