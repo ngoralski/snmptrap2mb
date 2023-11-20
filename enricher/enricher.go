@@ -18,9 +18,13 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 var wg sync.WaitGroup
+var counter = 0
+
+var baseDBConnections map[string]*sql.DB
 
 type SnmpFilter struct {
 	ID           int    `json:"id"`
@@ -192,6 +196,7 @@ func checkCondition(condition map[string]interface{}, snmpData SnmpData) (bool, 
 func enrichAction(data map[string]interface{}, lookupData string, snmpData SnmpData) map[string]interface{} {
 	var lookup Lookup
 	//newData := make(map[string]interface{})
+	//clock := time.Now()
 
 	err := jsondata.Unmarshal([]byte(lookupData), &lookup)
 	if err != nil {
@@ -201,16 +206,41 @@ func enrichAction(data map[string]interface{}, lookupData string, snmpData SnmpD
 	//fmt.Printf("Lookup data : %s\n", lookupData)
 	//fmt.Printf("Lookup info : %s\n", lookup.KeyColumn)
 
+	clock := time.Now()
 	dbEnrichSource := fmt.Sprintf(
 		"%s:%s@tcp(%s:%v)/%s", lookup.Dbuser, lookup.Dbpass,
 		lookup.Dbhost, lookup.Dbport, lookup.Dbname,
 	)
+	//dbIdentifier := fmt.Sprintf("%s-%s", lookup.Dbhost, lookup.Dbname)
+
+	//var sqlErr error
+	//var dbEnrich *sql.DB
+	//
+	//if _, exists := baseDBConnections[dbIdentifier]; exists {
+	//	dbEnrich = baseDBConnections[dbIdentifier]
+	//} else {
+	//	dbEnrich, sqlErr = sql.Open("mysql", dbEnrichSource)
+	//	dbEnrich.SetMaxOpenConns(10)
+	//	// Set the maximum number of idle connections
+	//	dbEnrich.SetMaxIdleConns(5)
+	//	// Set the maximum lifetime of a connection
+	//	dbEnrich.SetConnMaxLifetime(30 * time.Minute)
+	//	baseDBConnections[dbIdentifier] = dbEnrich
+	//}
 
 	dbEnrich, sqlErr := sql.Open("mysql", dbEnrichSource)
+	dbEnrich.SetMaxOpenConns(10)
+	// Set the maximum number of idle connections
+	dbEnrich.SetMaxIdleConns(5)
+	// Set the maximum lifetime of a connection
+	dbEnrich.SetConnMaxLifetime(30 * time.Minute)
+	fmt.Printf("P2 DB Connection : %s\n", time.Now().Sub(clock))
+	clock = time.Now()
+
 	if sqlErr != nil {
 		panic(sqlErr.Error())
 	}
-	defer dbEnrich.Close()
+	//defer dbEnrich.Close()
 
 	//sqlQuery := "SELECT ? FROM ? WHERE ? = '?'"
 	//valueLookup := "toto"
@@ -223,6 +253,8 @@ func enrichAction(data map[string]interface{}, lookupData string, snmpData SnmpD
 		lookup.ValueLookup = strings.Replace(lookup.ValueLookup, pattern, snmpOidData.(string), -1)
 		//fmt.Printf("New Value: %s\n\n", value)
 	}
+	fmt.Printf("P2 Replacement for key lookup: %s\n", time.Now().Sub(clock))
+	clock = time.Now()
 
 	queryWithParams := fmt.Sprintf("SELECT %s FROM %s WHERE %s = '%s'", lookup.Columns, lookup.Table, lookup.KeyColumn, lookup.ValueLookup)
 	//fmt.Printf("Executing query: %s\n", queryWithParams)
@@ -231,10 +263,13 @@ func enrichAction(data map[string]interface{}, lookupData string, snmpData SnmpD
 
 	//rows, err := dbEnrich.Query(sqlQuery, lookup.Columns, lookup.Table, lookup.KeyColumn, valueLookup)
 	rows, queryError := dbEnrich.Query(queryWithParams)
+	fmt.Printf("P2 Query lookup: %s\n", time.Now().Sub(clock))
+	clock = time.Now()
+
 	if queryError != nil {
 		panic(queryError.Error())
 	}
-	defer rows.Close()
+	//defer rows.Close()
 
 	// Get column names dynamically
 	enrichColumns, columnError := rows.Columns()
@@ -262,6 +297,12 @@ func enrichAction(data map[string]interface{}, lookupData string, snmpData SnmpD
 		// Send it into Kakfa review queue
 	}
 
+	fmt.Printf("P2 Query result parsing: %s\n", time.Now().Sub(clock))
+	clock = time.Now()
+
+	rows.Close()
+	dbEnrich.Close()
+
 	// Check for errors from iterating over rows.
 	//if err := rows.Err(); err != nil {
 	//	log.Fatal(err)
@@ -272,7 +313,7 @@ func enrichAction(data map[string]interface{}, lookupData string, snmpData SnmpD
 
 func performAction(snmpData SnmpData, Action string) map[string]interface{} {
 
-	fmt.Printf("Ok perform action on \n%s \nwith %s\n", snmpData.VarBinds, Action)
+	//fmt.Printf("Ok perform action on \n%s \nwith %s\n", snmpData.VarBinds, Action)
 	newEvent := make(map[string]interface{})
 	newEvent["source"] = snmpData.Address
 
@@ -306,7 +347,7 @@ func performAction(snmpData SnmpData, Action string) map[string]interface{} {
 
 	}
 
-	fmt.Printf("Result to return :\n%s\n", newEvent)
+	//fmt.Printf("Result to return :\n%s\n", newEvent)
 
 	return newEvent
 }
@@ -342,14 +383,15 @@ func checkFilterTrap(snmpData SnmpData, SnmpFilter string) bool {
 func parseDataSql(msg string, enriched *kafka.Writer, unknown *kafka.Writer, db *sql.DB) {
 	//dataEvent := make(map[string]string)
 	//var match bool
-	//var kafkaErr error
+	var kafkaErr error
 	var snmpData SnmpData
 	//var action string
+	clock := time.Now()
 
 	_ = jsondata.Unmarshal([]byte(msg), &snmpData)
 
-	fmt.Printf("Need to process %s\n", msg)
-	fmt.Printf("Need to process %s\n", snmpData.VarBinds)
+	//fmt.Printf("Need to process %s\n", msg)
+	//fmt.Printf("Need to process %s\n", snmpData.VarBinds)
 
 	// First go in DB and select infos
 
@@ -362,16 +404,20 @@ func parseDataSql(msg string, enriched *kafka.Writer, unknown *kafka.Writer, db 
 		"WHERE INET_ATON(?) BETWEEN agents.ip_start AND agents.ip_end " +
 		"AND snmpfilters.oid = ? AND snmpfilters.specific_trap = ? "
 
-	queryWithParams := fmt.Sprintf(sqlQuery, snmpData.Address, snmpData.OID, snmpData.Other)
-	fmt.Printf("Executing query: %s\n", queryWithParams)
+	//queryWithParams := fmt.Sprintf(sqlQuery, snmpData.Address, snmpData.OID, snmpData.Other)
+	//fmt.Printf("Executing query: %s\n", queryWithParams)
 
 	//fmt.Printf("SQL Query %s, %s, %s, %v\n", sqlQuery, snmpData.Address, snmpData.OID, snmpData.Other)
 
+	fmt.Printf("Time calculator : %s\n", time.Now().Sub(clock))
+	clock = time.Now()
 	rows, err := db.Query(sqlQuery, snmpData.Address, snmpData.OID, snmpData.Other)
 	if err != nil {
 		panic(err.Error())
 	}
-	defer rows.Close()
+	//defer rows.Close()
+	fmt.Printf("Get List of Filter for host : %s\n", time.Now().Sub(clock))
+	clock = time.Now()
 
 	var snmpfilter SnmpFilter
 
@@ -383,22 +429,56 @@ func parseDataSql(msg string, enriched *kafka.Writer, unknown *kafka.Writer, db 
 		if err != nil {
 			panic(err.Error())
 		}
-		fmt.Printf("FOUND Filter match : ID: %d, Name: %s, Comment: %s\n", snmpfilter.ID, snmpfilter.Name, snmpfilter.Comment)
+		//fmt.Printf("FOUND Filter match : ID: %d, Name: %s, Comment: %s\n", snmpfilter.ID, snmpfilter.Name, snmpfilter.Comment)
 
-		fmt.Printf(" Working on filter %s\n", snmpfilter.Filter)
+		//fmt.Printf(" Working on filter %s\n", snmpfilter.Filter)
 
 		filterStatus := checkFilterTrap(snmpData, snmpfilter.Filter)
 
 		if filterStatus {
-			fmt.Printf("Trap filtered, found a match on Host, Specific Trap and sub filters\n")
+			//fmt.Printf("Trap filtered, found a match on Host, Specific Trap and sub filters\n")
 			// Here before sending a status we need to perform the associated action
-			fmt.Printf("Action : %s\n", snmpfilter.Action)
+			//fmt.Printf("Action : %s\n", snmpfilter.Action)
+			clock = time.Now()
 			enrichPhase1 := performAction(snmpData, snmpfilter.Action)
-			fmt.Printf("Enrich Phase 1 %s\n", enrichPhase1)
-			enrichPhase2 := enrichAction(enrichPhase1, snmpfilter.Lookup, snmpData)
-			fmt.Printf("Enrich Phase 2 %s\n", enrichPhase2)
+			fmt.Printf("Enrich P1 : %s\n", time.Now().Sub(clock))
+			clock = time.Now()
+
+			//fmt.Printf("Enrich Phase 1 %s\n", enrichPhase1)
+			dataEvent := enrichAction(enrichPhase1, snmpfilter.Lookup, snmpData)
+			fmt.Printf("Enrich P2 : %s\n", time.Now().Sub(clock))
+			clock = time.Now()
+			//fmt.Printf("Enrich Phase 2 %s\n", enrichPhase2)
 
 			// Send the snmpdata enriched into process kafka queue
+
+			var targetTopic string
+			//
+			//for k, v := range dataEvent {
+			//	dataEvent[k] = v
+			//}
+
+			jsonString, _ := jsondata.Marshal(dataEvent)
+			newMsg := kafka.Message{
+				Value: []byte(string(jsonString)),
+			}
+
+			if len(dataEvent) > 0 {
+				kafkaErr = enriched.WriteMessages(context.Background(), newMsg)
+				targetTopic = "enriched"
+			} else {
+				kafkaErr = unknown.WriteMessages(context.Background(), kafka.Message{
+					Value: []byte(string(msg)),
+				})
+				targetTopic = "unknown"
+			}
+
+			if kafkaErr != nil {
+				fmt.Println(kafkaErr)
+			} else {
+				fmt.Printf("Trap message sent to %s topic\n", targetTopic)
+			}
+
 		} else {
 			fmt.Printf("Trap discarded, found a match on Host and Specific Trap but not on sub filters\n")
 			// Send it into Kakfa review queue
@@ -408,6 +488,8 @@ func parseDataSql(msg string, enriched *kafka.Writer, unknown *kafka.Writer, db 
 		fmt.Println("No matching filter rules found.")
 		// Send it into Kakfa review queue
 	}
+
+	rows.Close()
 
 }
 
@@ -543,6 +625,10 @@ func main() {
 
 	logger.LogMsg("read configfile config.json", "info")
 
+	//mux := http.NewServeMux()
+	//mux.HandleFunc("/custom_debug_path/profile", pprof.Profile)
+	//logorig.Fatal(http.ListenAndServe(":7777", mux))
+
 	threads := int(viper.Get("threads").(float64))
 	inputKafkaUrl := viper.Get("kafka.raw.server").(string)
 	inputTopic := viper.Get("kafka.raw.topic").(string)
@@ -561,6 +647,12 @@ func main() {
 
 	dbSource := fmt.Sprintf("%s:%s@tcp(%s:%.0f)/%s", dbUser, dbPassword, dbHost, dbPort, dbDatabase)
 	db, err := sql.Open("mysql", dbSource)
+	db.SetMaxOpenConns(10)
+	// Set the maximum number of idle connections
+	db.SetMaxIdleConns(5)
+	// Set the maximum lifetime of a connection
+	db.SetConnMaxLifetime(30 * time.Minute)
+
 	if err != nil {
 		panic(err.Error())
 	}
@@ -591,9 +683,10 @@ func main() {
 		if err != nil {
 			logger.LogMsg(fmt.Sprintf("%s", err), "fatal")
 		}
+		counter = counter + 1
 
 		go parseDataSql(string(m.Value), writer, unknownWriter, db)
-		fmt.Printf("message at topic:%v partition:%v offset:%v	%s = %s\n", m.Topic, m.Partition, m.Offset, string(m.Key), string(m.Value))
+		fmt.Printf("Counter : %f, message at topic:%v partition:%v offset:%v	%s = %s\n", counter, m.Topic, m.Partition, m.Offset, string(m.Key), string(m.Value))
 
 	}
 
