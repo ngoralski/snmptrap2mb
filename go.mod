@@ -6,7 +6,7 @@ require (
 	github.com/apex/log v1.9.0
 	github.com/deejross/go-snmplib v0.0.0-20190126151901-0ff3fc321a43
 	github.com/go-sql-driver/mysql v1.7.1
-	github.com/jmoiron/sqlx v1.3.5
+	github.com/lib/pq v1.2.0
 	github.com/mcuadros/go-lookup v0.0.0-20200831155250-80f87a4fa5ee
 	github.com/segmentio/kafka-go v0.4.32
 	github.com/spf13/viper v1.12.0

@@ -1,13 +1,13 @@
 package main
 
 import (
-	"context"
+	"database/sql"
 	jsondata "encoding/json"
 	"fmt"
 	"github.com/apex/log"
 	"github.com/deejross/go-snmplib"
+	_ "github.com/lib/pq"
 	"github.com/ngoralski/snmptrap2mb/logger"
-	kafka "github.com/segmentio/kafka-go"
 	"github.com/spf13/viper"
 	"math/rand"
 	"net"
@@ -27,6 +27,8 @@ type SnmpData struct {
 	VarBindOIDs []string
 }
 
+var counter int = 0
+
 func myUDPServer(listenIPAddr string, port int) *net.UDPConn {
 	addr := net.UDPAddr{
 		Port: port,
@@ -40,15 +42,16 @@ func myUDPServer(listenIPAddr string, port int) *net.UDPConn {
 	return conn
 }
 
-func newKafkaWriter(kafkaURL, topic string) *kafka.Writer {
-	return &kafka.Writer{
-		Addr:     kafka.TCP(kafkaURL),
-		Topic:    topic,
-		Balancer: &kafka.LeastBytes{},
+func newPostgreSQLConn(pgURL string) *sql.DB {
+	db, err := sql.Open("postgres", pgURL)
+	if err != nil {
+		logger.LogMsg("Can't connect to PostgreSQL", "fatal")
+		panic(err)
 	}
+	return db
 }
 
-func createSnmpListener(udpSock *net.UDPConn, writer *kafka.Writer, snmp *snmplib.SNMP, alarm chan struct{}) {
+func createSnmpListener(udpSock *net.UDPConn, db *sql.DB, snmp *snmplib.SNMP, alarm chan struct{}) {
 
 	loop := 0
 
@@ -66,14 +69,10 @@ func createSnmpListener(udpSock *net.UDPConn, writer *kafka.Writer, snmp *snmpli
 
 		trapData, snmpErr := snmp.ParseTrap(packet)
 		if snmpErr != nil {
-			//log.Printf("Error processing trap: %v.", snmpErr)
 			logger.LogMsg(fmt.Sprintf("Error processing trap: %v.", snmpErr), "warn")
 			continue
 		}
 
-		//fmt.Printf("VB : %T\n", trapData.)
-
-		// Push json data in SnmpData structure
 		var snmpData SnmpData
 		snmpData.VarBinds = trapData.VarBinds
 		snmpData.Address = trapData.Address
@@ -85,20 +84,20 @@ func createSnmpListener(udpSock *net.UDPConn, writer *kafka.Writer, snmp *snmpli
 		snmpData.Version = trapData.Version
 		snmpData.TrapType = trapData.TrapType
 
+		counter++
+
+		logger.LogMsg(fmt.Sprintf("Counter Trap Received : %d\n", counter), "info")
+
 		// Transform in json the snmp data
 		prettyPrint, _ := jsondata.MarshalIndent(snmpData, "", "\t")
 
-		msg := kafka.Message{
-			Value: []byte(string(prettyPrint)),
-		}
-
-		kafkaErr := writer.WriteMessages(context.Background(), msg)
-		if kafkaErr != nil {
-			logger.LogMsg(fmt.Sprint(kafkaErr), "error")
+		_, err := db.Exec(`INSERT INTO messages (content) VALUES ($1)`, prettyPrint)
+		if err != nil {
+			logger.LogMsg(fmt.Sprintf("PostgreSQL Error: %s", err), "error")
 			alarm <- struct{}{}
 		} else {
 
-			if viper.Get("log_level") == "warn" {
+			if viper.Get("log_level") == "info" {
 				logger.MyLog = log.WithFields(log.Fields{
 					"hostname":      logger.GetHostname(),
 					"snmp_version":  snmpData.Version,
@@ -114,16 +113,12 @@ func createSnmpListener(udpSock *net.UDPConn, writer *kafka.Writer, snmp *snmpli
 				logger.LogMsg("trap message received", "warn")
 				logger.DefaultLogLevel()
 			}
-			logger.LogMsg("Message produced in kafka", "info")
-
+			logger.LogMsg("Message stored in PostgreSQL", "info")
 		}
-
 	}
-
 }
 
 func main() {
-
 	viper.AddConfigPath("./")
 	viper.SetConfigName("config")
 	viper.SetConfigType("json")
@@ -131,12 +126,10 @@ func main() {
 
 	logger.InitLog()
 	logger.LogMsg("Starting snmpdCollector", "info")
-
 	logger.LogMsg("read configfile config.json", "info")
 
 	threads := int(viper.Get("threads").(float64))
-	kafkaUrl := viper.Get("kafka.raw.server").(string)
-	kafkaTopic := viper.Get("kafka.raw.topic").(string)
+	pgURL := viper.Get("postgres.url").(string)
 	listenIP := viper.Get("ip").(string)
 	listenPort := int(viper.Get("port").(float64))
 
@@ -155,22 +148,17 @@ func main() {
 	snmp := snmplib.NewSNMPOnConn(target, community, version, 2*time.Second, 5, udpSocket)
 	defer snmp.Close()
 
-	// TODO
-	// Manage User inside external json configuration file
+	logger.LogMsg(fmt.Sprintf("Using PostgreSQL database %s", pgURL), "info")
 
-	logger.LogMsg(fmt.Sprintf("Using kafka server %s", kafkaUrl), "info")
-	logger.LogMsg(fmt.Sprintf("Push messages in kafka topic %s", kafkaTopic), "info")
-
-	//Define Kafka connections
-	writer := newKafkaWriter(kafkaUrl, kafkaTopic)
-	defer writer.Close()
+	// Establish PostgreSQL connection
+	db := newPostgreSQLConn(pgURL)
+	defer db.Close()
 
 	alarm := make(chan struct{})
 	for i := 0; i < threads; i++ {
-		go createSnmpListener(udpSocket, writer, snmp, alarm)
+		go createSnmpListener(udpSocket, db, snmp, alarm)
 	}
 
 	msg := <-alarm
 	fmt.Println(msg)
-
 }
