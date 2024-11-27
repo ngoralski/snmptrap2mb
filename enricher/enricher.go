@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"time"
 )
 
 var wg sync.WaitGroup
@@ -29,7 +28,7 @@ type SnmpData struct {
 	Version     int                    `json:"version"`
 	TrapType    int                    `json:"trapType"`
 	OID         string                 `json:"oid"`
-	ReceivedAt  time.Time              `json:"receivedAt"`
+	ReceivedAt  string                 `json:"receivedAt"`
 	Other       interface{}            `json:"other"`
 	Community   string                 `json:"community"`
 	Username    string                 `json:"username"`
@@ -134,17 +133,71 @@ func getFieldValue(msg interface{}, key string) (interface{}, bool) {
 	return fieldValue.Interface(), true
 }
 
-// Recursive function to replace placeholders in a nested map.
+// parsePattern parses a pattern in the form of 's/regex/replacement/' and returns the regex and replacement parts as a slice
+func parsePattern(patternStr string) []string {
+	if len(patternStr) < 3 || patternStr[0] != 's' || patternStr[1] != '/' || patternStr[len(patternStr)-1] != '/' {
+		return nil
+	}
+
+	parts := strings.SplitN(patternStr[2:len(patternStr)-1], "/", 2)
+	if len(parts) != 2 {
+		return nil
+	}
+
+	return parts
+}
+
+// Replace placeholders within a nested map structure
 func replacePlaceholders(data map[string]interface{}, replacements map[string]string) {
 	for key, value := range data {
 		switch v := value.(type) {
 		case string:
 			for placeholder, replacement := range replacements {
-				v = strings.ReplaceAll(v, placeholder, replacement)
+				// Regex to match placeholders with or without the regex part
+				// Uses non-capturing groups for placeholders with optional regex after '||'
+				re := regexp.MustCompile(fmt.Sprintf(`%s(?:\|\|(.+)\|\|)?`, regexp.QuoteMeta(placeholder)))
+				dynRegexp := re.FindStringSubmatch(v)
+				fmt.Printf("Regex: %s, Dyn Regex: %s\n", re.String(), dynRegexp)
+				//matches3 := re.FindAllStringSubmatch(v, -1)
+				//fmt.Printf("Matches3: %+v\n", matches3)
+
+				if len(dynRegexp) > 0 {
+					//regexPattern := dynRegexp[1]
+
+					parts := parsePattern(dynRegexp[1])
+					if len(parts) != 2 {
+						fmt.Println("Invalid pattern format")
+						return
+					}
+					regexPattern := parts[0]
+					replacementTemplate := parts[1]
+
+					re := regexp.MustCompile(regexPattern)
+					v = re.ReplaceAllStringFunc(replacement, func(m string) string {
+						// Find the submatches (capture groups)
+						submatches := re.FindStringSubmatch(m)
+						if len(submatches) == 0 {
+							return m
+						}
+
+						// Replace the $1, $2, ... in the replacement template with the matched capture groups
+						replacement := replacementTemplate
+						for i := 1; i < len(submatches); i++ {
+							placeholder := fmt.Sprintf("$%d", i)
+							replacement = strings.ReplaceAll(replacement, placeholder, submatches[i])
+						}
+						return replacement
+					})
+
+				}
+
+				fmt.Printf("Replacing placeholder '%s' with '%s'\n", placeholder, replacement)
+				data[key] = v
+
 			}
-			data[key] = v
+			//data[key] = v
 		case map[string]interface{}:
-			replacePlaceholders(v, replacements)
+			replacePlaceholders(v, replacements) // Recursive call for nested map
 		case []interface{}:
 			for i, item := range v {
 				if subMap, ok := item.(map[string]interface{}); ok {
