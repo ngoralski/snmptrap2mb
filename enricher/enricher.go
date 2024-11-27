@@ -4,16 +4,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"reflect"
-	"regexp"
-	"strings"
-	"sync"
-	//"time"
-
 	"github.com/apex/log"
 	_ "github.com/lib/pq"
 	"github.com/ngoralski/snmptrap2mb/logger"
 	"github.com/spf13/viper"
+	"reflect"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
 )
 
 var wg sync.WaitGroup
@@ -30,6 +29,7 @@ type SnmpData struct {
 	Version     int                    `json:"version"`
 	TrapType    int                    `json:"trapType"`
 	OID         string                 `json:"oid"`
+	ReceivedAt  time.Time              `json:"receivedAt"`
 	Other       interface{}            `json:"other"`
 	Community   string                 `json:"community"`
 	Username    string                 `json:"username"`
@@ -122,12 +122,10 @@ func fetchPendingMessages(db *sql.DB) ([]SnmpData, error) {
 func getFieldValue(msg interface{}, key string) (interface{}, bool) {
 	msgValue := reflect.ValueOf(msg)
 
-	// Ensure we have the correct type
 	if msgValue.Kind() != reflect.Struct {
 		return nil, false
 	}
 
-	// Access the field by name
 	fieldValue := msgValue.FieldByName(key)
 	if !fieldValue.IsValid() {
 		return nil, false
@@ -136,7 +134,44 @@ func getFieldValue(msg interface{}, key string) (interface{}, bool) {
 	return fieldValue.Interface(), true
 }
 
+// Recursive function to replace placeholders in a nested map.
+func replacePlaceholders(data map[string]interface{}, replacements map[string]string) {
+	for key, value := range data {
+		switch v := value.(type) {
+		case string:
+			for placeholder, replacement := range replacements {
+				v = strings.ReplaceAll(v, placeholder, replacement)
+			}
+			data[key] = v
+		case map[string]interface{}:
+			replacePlaceholders(v, replacements)
+		case []interface{}:
+			for i, item := range v {
+				if subMap, ok := item.(map[string]interface{}); ok {
+					replacePlaceholders(subMap, replacements)
+					v[i] = subMap
+				}
+			}
+		}
+	}
+}
+
 func applyFilters(msg SnmpData, filters map[int]Filter, criteria map[int][]FilterCriteria) (int, map[string]interface{}) {
+	// Helper function to add fields to replacements map
+	addToReplacements := func(replacements map[string]string, prefix string, v reflect.Value) {
+		for i := 0; i < v.NumField(); i++ {
+			field := v.Type().Field(i)
+			fieldValue := v.Field(i)
+
+			if !fieldValue.CanInterface() {
+				continue
+			}
+
+			placeholder := fmt.Sprintf("##%s%s##", prefix, field.Name)
+			replacements[placeholder] = fmt.Sprintf("%v", fieldValue.Interface())
+		}
+	}
+
 	for filterID, filter := range filters {
 		match := true
 		for _, crit := range criteria[filterID] {
@@ -211,13 +246,11 @@ func applyFilters(msg SnmpData, filters map[int]Filter, criteria map[int][]Filte
 				match = false
 			}
 
-			// If `match` is already false, no need to evaluate further criteria
 			if !match {
 				break
 			}
 		}
 
-		// If all conditions met for this filter, create and return the JSON object
 		if match {
 			fmt.Printf("Filter matched: %+v\n", filter)
 			resultJSON := make(map[string]interface{})
@@ -226,19 +259,23 @@ func applyFilters(msg SnmpData, filters map[int]Filter, criteria map[int][]Filte
 				return -1, nil
 			}
 
-			// Replace placeholders in the result JSON
-			for key, value := range resultJSON {
-				if valueStr, ok := value.(string); ok {
-					for varName, varValue := range msg.VarBinds {
-						placeholder := fmt.Sprintf("##%s##", varName)
-						valueStr = strings.ReplaceAll(valueStr, placeholder, fmt.Sprintf("%v", varValue))
-					}
-					// Handle direct fields
-					valueStr = strings.ReplaceAll(valueStr, "##Address##", msg.Address)
-					valueStr = strings.ReplaceAll(valueStr, "##OID##", msg.OID)
-					resultJSON[key] = valueStr
-				}
+			// Initialize the replacements map.
+			replacements := make(map[string]string)
+
+			// Add all fields from msg to replacements.
+			msgValue := reflect.ValueOf(msg)
+			if msgValue.Kind() == reflect.Struct {
+				addToReplacements(replacements, "", msgValue)
 			}
+
+			// Add all fields from msg.VarBinds to replacements.
+			for varName, varValue := range msg.VarBinds {
+				placeholder := fmt.Sprintf("##%s##", varName)
+				replacements[placeholder] = fmt.Sprintf("%v", varValue)
+			}
+
+			// Replace placeholders in the JSON result.
+			replacePlaceholders(resultJSON, replacements)
 			return filterID, resultJSON
 		}
 	}
@@ -247,7 +284,6 @@ func applyFilters(msg SnmpData, filters map[int]Filter, criteria map[int][]Filte
 }
 
 func processSNMPMessages(db *sql.DB) {
-	// Fetch filters and criteria
 	filters, err := fetchFilters(db)
 	if err != nil {
 		logger.LogMsg(fmt.Sprintf("Failed to fetch filters: %v", err), "fatal")
@@ -260,7 +296,6 @@ func processSNMPMessages(db *sql.DB) {
 		return
 	}
 
-	// Fetch pending messages and process them
 	snmpMessages, err := fetchPendingMessages(db)
 	if err != nil {
 		logger.LogMsg(fmt.Sprintf("Failed to fetch messages: %v", err), "fatal")
@@ -268,11 +303,9 @@ func processSNMPMessages(db *sql.DB) {
 	}
 
 	for _, msg := range snmpMessages {
-		// Apply filters to each message and display results
 		filterID, messageJson := applyFilters(msg, filters, filterCriteria)
 		if filterID != -1 {
 			fmt.Printf("Processing message ID: %d with filter ID: %d, Result JSON: %+v\n", msg.ID, filterID, messageJson)
-			// Example: Update status to 'processed'
 			jsonData, err := json.Marshal(messageJson)
 			if err != nil {
 				logger.LogMsg(fmt.Sprintf("failed to marshal message JSON: %v", err), "fatal")
@@ -283,6 +316,9 @@ func processSNMPMessages(db *sql.DB) {
 			}
 		} else {
 			_, err = db.Exec(`UPDATE messages SET status = 'discarded', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, msg.ID)
+			if err != nil {
+				logger.LogMsg(fmt.Sprintf("Failed to update message status: %v", err), "fatal")
+			}
 			logger.LogMsg(fmt.Sprintf("No matching filter for message ID: %d", msg.ID), "info")
 		}
 	}
@@ -298,8 +334,6 @@ func main() {
 	logger.LogMsg("Starting SNMP trap processor", "info")
 	logger.LogMsg("Reading config file config.json", "info")
 
-	// Read configuration
-	//threads := int(viper.Get("threads").(float64))
 	pgURL := viper.Get("postgres.url").(string)
 
 	db := newPostgreSQLConn(pgURL)
@@ -313,8 +347,10 @@ func main() {
 	// Run a single processing loop for debug purposes
 	processSNMPMessages(db)
 
-	// Original multi-threaded loop for reference
+	// Multi-threaded processing loop for future use
 	/*
+	   threads := int(viper.Get("threads").(float64))
+
 	   for i := 0; i < threads; i++ {
 	       wg.Add(1)
 	       go func() {

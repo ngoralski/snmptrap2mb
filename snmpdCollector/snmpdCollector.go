@@ -19,6 +19,7 @@ type SnmpData struct {
 	Version     int
 	TrapType    int
 	OID         string
+	ReceivedAt  time.Time
 	Other       interface{}
 	Community   string
 	Username    string
@@ -76,6 +77,7 @@ func createSnmpListener(udpSock *net.UDPConn, db *sql.DB, snmp *snmplib.SNMP, al
 		var snmpData SnmpData
 		snmpData.VarBinds = trapData.VarBinds
 		snmpData.Address = trapData.Address
+		snmpData.ReceivedAt = time.Now()
 		snmpData.OID = fmt.Sprintf("%s", strings.Trim(strings.Replace(fmt.Sprint(trapData.OID), " ", ".", -1), "[]"))
 		snmpData.VarBindOIDs = trapData.VarBindOIDs
 		snmpData.Other = trapData.Other
@@ -101,6 +103,7 @@ func createSnmpListener(udpSock *net.UDPConn, db *sql.DB, snmp *snmplib.SNMP, al
 				logger.MyLog = log.WithFields(log.Fields{
 					"hostname":      logger.GetHostname(),
 					"snmp_version":  snmpData.Version,
+					"Received_at":   snmpData.ReceivedAt,
 					"trap_type":     snmpData.TrapType,
 					"oid":           snmpData.OID,
 					"specific_trap": snmpData.Other,
