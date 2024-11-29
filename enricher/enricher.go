@@ -133,13 +133,38 @@ func getFieldValue(msg interface{}, key string) (interface{}, bool) {
 	return fieldValue.Interface(), true
 }
 
-// parsePattern parses a pattern in the form of 's/regex/replacement/' and returns the regex and replacement parts as a slice
-func parsePattern(patternStr string) []string {
-	if len(patternStr) < 3 || patternStr[0] != 's' || patternStr[1] != '/' || patternStr[len(patternStr)-1] != '/' {
+// parseSubstitutionPattern should split the pattern s/.../.../ into the regex and replacement
+func parseSubstitutionPattern(pattern string) []string {
+	if len(pattern) < 3 || pattern[0] != 's' || pattern[1] != '/' || pattern[len(pattern)-1] != '/' {
 		return nil
 	}
 
-	parts := strings.SplitN(patternStr[2:len(patternStr)-1], "/", 2)
+	var parts []string
+	var current strings.Builder
+	escaped := false
+
+	for i := 2; i < len(pattern)-1; i++ {
+		char := rune(pattern[i])
+
+		if escaped {
+			current.WriteRune('\\')
+			current.WriteRune(char)
+			escaped = false
+		} else if char == '\\' {
+			escaped = true
+		} else if char == '/' {
+			parts = append(parts, current.String())
+			current.Reset()
+		} else {
+			current.WriteRune(char)
+		}
+	}
+
+	if escaped {
+		current.WriteRune('\\')
+	}
+	parts = append(parts, current.String())
+
 	if len(parts) != 2 {
 		return nil
 	}
@@ -152,50 +177,45 @@ func replacePlaceholders(data map[string]interface{}, replacements map[string]st
 	for key, value := range data {
 		switch v := value.(type) {
 		case string:
-			for placeholder, replacement := range replacements {
-				// Regex to match placeholders with or without the regex part
-				// Uses non-capturing groups for placeholders with optional regex after '||'
-				re := regexp.MustCompile(fmt.Sprintf(`%s(?:\|\|(.+)\|\|)?`, regexp.QuoteMeta(placeholder)))
-				dynRegexp := re.FindStringSubmatch(v)
-				fmt.Printf("Regex: %s, Dyn Regex: %s\n", re.String(), dynRegexp)
-				//matches3 := re.FindAllStringSubmatch(v, -1)
-				//fmt.Printf("Matches3: %+v\n", matches3)
 
-				if len(dynRegexp) > 0 {
-					//regexPattern := dynRegexp[1]
+			strValue, _ := value.(string)
+			pattern := `^##(.*)##(\|\|(.*)\|\|)?$`
+			re := regexp.MustCompile(pattern)
+			matches := re.FindStringSubmatch(strValue)
+			if len(matches) > 3 && matches[3] != "" {
+				lookupKey := fmt.Sprintf("##%s##", matches[1])
+				fmt.Printf("Dynamic pattern Matching with REGEXP\n\n")
+				fmt.Printf("Match >3 : %+v\n", matches[3])
 
-					parts := parsePattern(dynRegexp[1])
-					if len(parts) != 2 {
-						fmt.Println("Invalid pattern format")
-						return
-					}
-					regexPattern := parts[0]
-					replacementTemplate := parts[1]
-
-					re := regexp.MustCompile(regexPattern)
-					v = re.ReplaceAllStringFunc(replacement, func(m string) string {
-						// Find the submatches (capture groups)
-						submatches := re.FindStringSubmatch(m)
-						if len(submatches) == 0 {
-							return m
-						}
-
-						// Replace the $1, $2, ... in the replacement template with the matched capture groups
-						replacement := replacementTemplate
-						for i := 1; i < len(submatches); i++ {
-							placeholder := fmt.Sprintf("$%d", i)
-							replacement = strings.ReplaceAll(replacement, placeholder, submatches[i])
-						}
-						return replacement
-					})
-
+				parts := parseSubstitutionPattern(matches[3])
+				if parts == nil {
+					log.Fatal("Invalid substitution pattern")
+					return
 				}
+				searchPattern := parts[0]
+				replacement := parts[1]
+				re, err := regexp.Compile(searchPattern)
+				if err != nil {
+					log.Fatalf("Invalid regex pattern: %s", err)
+					return
+				}
+				result := re.ReplaceAllStringFunc(replacements[lookupKey], func(match string) string {
+					submatches := re.FindStringSubmatch(match)
+					result := replacement
+					for i := 1; i < len(submatches); i++ {
+						placeholder := fmt.Sprintf("$%d", i)
+						result = strings.ReplaceAll(result, placeholder, submatches[i])
+					}
+					return result
+				})
+				data[key] = result
 
-				fmt.Printf("Replacing placeholder '%s' with '%s'\n", placeholder, replacement)
-				data[key] = v
+			} else if len(matches) > 3 && matches[3] == "" {
+				lookupKey := fmt.Sprintf("##%s##", matches[1])
+				data[key] = replacements[lookupKey]
 
 			}
-			//data[key] = v
+
 		case map[string]interface{}:
 			replacePlaceholders(v, replacements) // Recursive call for nested map
 		case []interface{}:
